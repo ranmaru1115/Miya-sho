@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>応援券検索</title>
+    <link rel="manifest" href="manifest.json">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <style>
+        body { font-family: sans-serif; background: #f0f2f5; margin: 0; padding: 10px; }
+        .sticky-top { position: sticky; top: 0; background: #f0f2f5; padding: 10px 0; z-index: 100; }
+        input { width: 100%; padding: 15px; font-size: 16px; border: 2px solid #0288D1; border-radius: 10px; box-sizing: border-box; outline: none; }
+        .btn-gps { width: 100%; padding: 12px; background: #4CAF50; color: white; border: none; border-radius: 10px; font-weight: bold; margin-top: 8px; cursor: pointer; }
+        .card { background: white; padding: 15px; border-radius: 10px; margin-bottom: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); border-left: 5px solid #0288D1; }
+        .name { font-weight: bold; font-size: 1.1rem; margin-bottom: 5px; }
+        .addr { font-size: 0.85rem; color: #666; white-space: pre-line; line-height: 1.4; }
+        .dist { color: #0288D1; font-weight: bold; font-size: 0.8rem; margin-top: 8px; }
+    </style>
+</head>
+<body>
+    <div class="sticky-top">
+        <input type="text" id="q" placeholder="店名・住所・キーワードで検索...">
+        <button class="btn-gps" onclick="getGPS()">📍 現在地から近い順に並べる</button>
+    </div>
+    <div id="list"></div>
+
+    <script>
+        // PWA Service Worker登録
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('sw.js').catch(() => {});
+        }
+
+        // KMLから抽出した全データ
+        const rawData = [
+            {n:"アレーズ加納店", a:"宮崎市清武町加納乙346-1\n(共通・地域券)", lat:31.879, lng:131.394},
+            {n:"石川精肉店", a:"宮崎市清武町加納3丁目9番地\n(共通・地域券)", lat:31.881, lng:131.396},
+            {n:"石坂村地鶏直売店", a:"宮崎市清武町今泉丙5-16\n(共通・地域券)", lat:31.851, lng:131.385},
+            {n:"Aコープ清武店", a:"宮崎市清武町大字船引216番地3\n(共通・地域券)", lat:31.856, lng:131.382},
+            {n:"お菓子の日髙清武店", a:"宮崎市清武町正手3丁目20\n(共通・地域券)", lat:31.853, lng:131.392},
+            {n:"ハンズマン加納店", a:"宮崎市清武町加納乙346-1\n(共通・地域券)", lat:31.879, lng:131.393},
+            {n:"道の駅高岡ビタミン館", a:"宮崎市高岡町花見304-5\n(共通・地域券)", lat:31.928, lng:131.296},
+            {n:"Aコープ田野店", a:"宮崎市田野町乙9358\n(共通・地域券)", lat:31.841, lng:131.302},
+            {n:"コープみやざき 佐土原店", a:"宮崎市佐土原町下那珂2642\n(共通・地域券)", lat:32.015, lng:131.488},
+            {n:"ヤマダデンキ テックランド新宮崎本店", a:"宮崎市新別府町土田167\n(※共通券のみ)", lat:31.921, lng:131.451},
+            {n:"リンガーハット 宮崎大島店", a:"宮崎市大島町前田320-1\n(※共通券のみ)", lat:31.942, lng:131.432},
+            {n:"リンガーハット 宮崎大塚店", a:"宮崎市大塚町京園3109-1\n(※共通券のみ)", lat:31.914, lng:131.398},
+            {n:"宮崎空港ビル", a:"宮崎空港内各店舗\n(共通・地域券)", lat:31.877, lng:131.448}
+            // ※ここに対応店舗をさらに追加できます
+        ];
+
+        let userLoc = null;
+
+        function calcDist(la1, lo1, la2, lo2) {
+            const R = 6371;
+            const dLa = (la2-la1)*Math.PI/180;
+            const dLo = (lo2-lo1)*Math.PI/180;
+            const a = Math.sin(dLa/2)**2 + Math.cos(la1*Math.PI/180)*Math.cos(la2*Math.PI/180)*Math.sin(dLo/2)**2;
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        }
+
+        function render() {
+            const word = document.getElementById('q').value.toLowerCase();
+            const listEl = document.getElementById('list');
+            listEl.innerHTML = "";
+
+            let filtered = rawData.filter(s => s.n.toLowerCase().includes(word) || s.a.toLowerCase().includes(word));
+
+            if (userLoc) {
+                filtered.forEach(s => s.d = calcDist(userLoc.lat, userLoc.lng, s.lat, s.lng));
+                filtered.sort((a, b) => a.d - b.d);
+            }
+
+            filtered.forEach(s => {
+                const div = document.createElement('div');
+                div.className = 'card';
+                const dText = s.d ? `<div class="dist">📍 現在地から約 ${s.d.toFixed(2)} km</div>` : "";
+                div.innerHTML = `<div class="name">${s.n}</div><div class="addr">${s.a}</div>${dText}`;
+                // タップで地図アプリを起動
+                div.onclick = () => {
+                    const url = `geo:${s.lat},${s.lng}?q=${encodeURIComponent(s.n)}`;
+                    location.href = url;
+                };
+                listEl.appendChild(div);
+            });
+        }
+
+        function getGPS() {
+            if (!navigator.geolocation) return alert("GPS未対応です");
+            navigator.geolocation.getCurrentPosition(p => {
+                userLoc = { lat: p.coords.latitude, lng: p.coords.longitude };
+                render();
+            }, () => alert("位置情報を許可してください"));
+        }
+
+        document.getElementById('q').oninput = render;
+        render();
+    </script>
+</body>
+</html>

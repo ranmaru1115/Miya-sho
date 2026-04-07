@@ -1,0 +1,9 @@
+{
+  "name": "応援券店舗検索",
+  "short_name": "応援券",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f0f2f5",
+  "theme_color": "#0288D1",
+  "icons": [{ "src": "icon.png", "sizes": "192x192", "type": "image/png" }]
+}
