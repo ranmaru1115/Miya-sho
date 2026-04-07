@@ -12,10 +12,11 @@
         .sticky-top { position: sticky; top: 0; background: #f0f2f5; padding: 10px 0; z-index: 100; }
         input { width: 100%; padding: 15px; font-size: 16px; border: 2px solid #0288D1; border-radius: 10px; box-sizing: border-box; outline: none; }
         .btn-gps { width: 100%; padding: 12px; background: #4CAF50; color: white; border: none; border-radius: 10px; font-weight: bold; margin-top: 8px; cursor: pointer; }
-        .card { background: white; padding: 15px; border-radius: 10px; margin-bottom: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); border-left: 5px solid #0288D1; }
+        .card { background: white; padding: 15px; border-radius: 10px; margin-bottom: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); border-left: 5px solid #0288D1; cursor: pointer; }
         .name { font-weight: bold; font-size: 1.1rem; margin-bottom: 5px; }
         .addr { font-size: 0.85rem; color: #666; white-space: pre-line; line-height: 1.4; }
-        .dist { color: #0288D1; font-weight: bold; font-size: 0.8rem; margin-top: 8px; }
+        .dist { font-weight: bold; font-size: 0.8rem; margin-top: 8px; }
+        .loading { text-align: center; padding: 20px; color: #666; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -23,34 +24,20 @@
         <input type="text" id="q" placeholder="店名・住所・キーワードで検索...">
         <button class="btn-gps" onclick="getGPS()">📍 現在地から近い順に並べる</button>
     </div>
-    <div id="list"></div>
+    <div id="list">
+        <div class="loading">⏳ KMLデータを読み込み中...</div>
+    </div>
 
     <script>
-        // PWA Service Worker登録
-        if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('sw.js').catch(() => {});
-        }
+        // PWA Service Worker（現在はオフ。必要になればコメントを外してね）
+        // if ('serviceWorker' in navigator) {
+        //     navigator.serviceWorker.register('sw.js').catch(() => {});
+        // }
 
-        // KMLから抽出した全データ
-        const rawData = [
-            {n:"アレーズ加納店", a:"宮崎市清武町加納乙346-1\n(共通・地域券)", lat:31.879, lng:131.394},
-            {n:"石川精肉店", a:"宮崎市清武町加納3丁目9番地\n(共通・地域券)", lat:31.881, lng:131.396},
-            {n:"石坂村地鶏直売店", a:"宮崎市清武町今泉丙5-16\n(共通・地域券)", lat:31.851, lng:131.385},
-            {n:"Aコープ清武店", a:"宮崎市清武町大字船引216番地3\n(共通・地域券)", lat:31.856, lng:131.382},
-            {n:"お菓子の日髙清武店", a:"宮崎市清武町正手3丁目20\n(共通・地域券)", lat:31.853, lng:131.392},
-            {n:"ハンズマン加納店", a:"宮崎市清武町加納乙346-1\n(共通・地域券)", lat:31.879, lng:131.393},
-            {n:"道の駅高岡ビタミン館", a:"宮崎市高岡町花見304-5\n(共通・地域券)", lat:31.928, lng:131.296},
-            {n:"Aコープ田野店", a:"宮崎市田野町乙9358\n(共通・地域券)", lat:31.841, lng:131.302},
-            {n:"コープみやざき 佐土原店", a:"宮崎市佐土原町下那珂2642\n(共通・地域券)", lat:32.015, lng:131.488},
-            {n:"ヤマダデンキ テックランド新宮崎本店", a:"宮崎市新別府町土田167\n(※共通券のみ)", lat:31.921, lng:131.451},
-            {n:"リンガーハット 宮崎大島店", a:"宮崎市大島町前田320-1\n(※共通券のみ)", lat:31.942, lng:131.432},
-            {n:"リンガーハット 宮崎大塚店", a:"宮崎市大塚町京園3109-1\n(※共通券のみ)", lat:31.914, lng:131.398},
-            {n:"宮崎空港ビル", a:"宮崎空港内各店舗\n(共通・地域券)", lat:31.877, lng:131.448}
-            // ※ここに対応店舗をさらに追加できます
-        ];
-
+        let rawData = [];
         let userLoc = null;
 
+        // 距離計算の関数
         function calcDist(la1, lo1, la2, lo2) {
             const R = 6371;
             const dLa = (la2-la1)*Math.PI/180;
@@ -59,28 +46,95 @@
             return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
         }
 
+        // 同じフォルダにある「doc.kml」を自動で読み込んで解析する最強機能！
+        async function loadKML() {
+            try {
+                const response = await fetch('doc.kml');
+                if (!response.ok) throw new Error("KMLが見つかりません");
+                const kmlText = await response.text();
+                
+                const parser = new DOMParser();
+                const xmlDoc = parser.parseFromString(kmlText, "text/xml");
+                const placemarks = xmlDoc.getElementsByTagName("Placemark");
+                
+                for (let i = 0; i < placemarks.length; i++) {
+                    const p = placemarks[i];
+                    const name = p.getElementsByTagName("name")[0]?.textContent || "名称不明";
+                    let desc = p.getElementsByTagName("description")[0]?.textContent || "";
+                    
+                    // 説明文の中の <br> などを改行に直す
+                    desc = desc.replace(/<br\s*[\/]?>/gi, '\n').replace(/<\/?[^>]+(>|$)/g, "").trim();
+
+                    // 座標（緯度・経度）を取り出す
+                    let lat = null, lng = null;
+                    const coords = p.getElementsByTagName("coordinates")[0]?.textContent;
+                    if (coords) {
+                        const parts = coords.trim().split(',');
+                        if (parts.length >= 2) {
+                            lng = parseFloat(parts[0]);
+                            lat = parseFloat(parts[1]);
+                        }
+                    }
+                    
+                    rawData.push({ n: name, a: desc, lat: lat, lng: lng });
+                }
+                render(); // データが読み終わったら画面を描画
+            } catch (error) {
+                document.getElementById('list').innerHTML = "<div class='loading' style='color:red;'>⚠️ doc.kml の読み込みに失敗しました。<br>GitHubに doc.kml がアップロードされているか確認してね！</div>";
+            }
+        }
+
         function render() {
             const word = document.getElementById('q').value.toLowerCase();
             const listEl = document.getElementById('list');
             listEl.innerHTML = "";
 
+            if (rawData.length === 0) return;
+
             let filtered = rawData.filter(s => s.n.toLowerCase().includes(word) || s.a.toLowerCase().includes(word));
 
             if (userLoc) {
-                filtered.forEach(s => s.d = calcDist(userLoc.lat, userLoc.lng, s.lat, s.lng));
+                filtered.forEach(s => {
+                    // 座標があるお店だけ距離を計算する
+                    if (s.lat !== null && s.lng !== null) {
+                        s.d = calcDist(userLoc.lat, userLoc.lng, s.lat, s.lng);
+                    } else {
+                        s.d = 9999; // 座標がないお店は一番下にするための仮の数字
+                    }
+                });
+                // 距離が近い順に並び替え
                 filtered.sort((a, b) => a.d - b.d);
             }
 
             filtered.forEach(s => {
                 const div = document.createElement('div');
                 div.className = 'card';
-                const dText = s.d ? `<div class="dist">📍 現在地から約 ${s.d.toFixed(2)} km</div>` : "";
+                
+                let dText = "";
+                if (userLoc) {
+                    if (s.d !== 9999) {
+                        dText = `<div class="dist" style="color:#0288D1;">📍 現在地から約 ${s.d.toFixed(2)} km</div>`;
+                    } else {
+                        dText = `<div class="dist" style="color:#E64A19;">📍 距離計算不可（座標データなし）</div>`;
+                    }
+                }
+
                 div.innerHTML = `<div class="name">${s.n}</div><div class="addr">${s.a}</div>${dText}`;
-                // タップで地図アプリを起動
+                
+                // タップでGoogleマップを起動
                 div.onclick = () => {
-                    const url = `geo:${s.lat},${s.lng}?q=${encodeURIComponent(s.n)}`;
+                    let url;
+                    if (s.lat !== null && s.lng !== null) {
+                        // 座標があればピンポイントで開く
+                        url = `https://www.google.com/maps/search/?api=1&query=${s.lat},${s.lng}`;
+                    } else {
+                        // 座標がなければ「お店の名前＋住所」で検索して開く
+                        const addressFirstLine = s.a.split('\n')[0];
+                        url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(s.n + " " + addressFirstLine)}`;
+                    }
                     location.href = url;
                 };
+                
                 listEl.appendChild(div);
             });
         }
@@ -94,7 +148,9 @@
         }
 
         document.getElementById('q').oninput = render;
-        render();
+        
+        // アプリ起動時にKMLを読み込む
+        loadKML();
     </script>
 </body>
 </html>
